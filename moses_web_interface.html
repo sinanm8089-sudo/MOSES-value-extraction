@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MOSES Value Extraction Tool</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 1200px;
+            width: 100%;
+            padding: 40px;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            color: #6b7280;
+            font-size: 1.1rem;
+        }
+
+        .upload-section {
+            background: linear-gradient(135deg, #f6f8fb 0%, #e9ecef 100%);
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 50px 30px;
+            text-align: center;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-section:hover {
+            border-color: #764ba2;
+            background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+            transform: translateY(-2px);
+        }
+
+        .upload-section.dragover {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-color: white;
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .upload-section h3 {
+            color: #374151;
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+        }
+
+        .upload-section p {
+            color: #6b7280;
+            font-size: 1rem;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .file-info {
+            background: #e0e7ff;
+            border-left: 4px solid #667eea;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .file-info.show {
+            display: flex;
+        }
+
+        .file-info .icon {
+            color: #667eea;
+            font-size: 1.5rem;
+        }
+
+        .file-info .text {
+            flex: 1;
+            color: #374151;
+            font-weight: 500;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        .btn:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+
+        .btn.success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn.success:hover {
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.6);
+        }
+
+        .alert {
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .alert.show {
+            display: flex;
+        }
+
+        .alert.error {
+            background: #fee2e2;
+            border-left: 4px solid #ef4444;
+            color: #991b1b;
+        }
+
+        .alert.success {
+            background: #d1fae5;
+            border-left: 4px solid #10b981;
+            color: #065f46;
+        }
+
+        .results {
+            display: none;
+            margin-top: 30px;
+        }
+
+        .results.show {
+            display: block;
+        }
+
+        .results h2 {
+            color: #374151;
+            margin-bottom: 20px;
+            font-size: 1.8rem;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+
+        thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #e5e7eb;
+            color: #374151;
+        }
+
+        tbody tr:hover {
+            background: #f9fafb;
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 30px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f4f6;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .instructions {
+            background: linear-gradient(135deg, #e0e7ff 0%, #ddd6fe 100%);
+            padding: 25px;
+            border-radius: 15px;
+            margin-top: 30px;
+        }
+
+        .instructions h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+
+        .instructions ol {
+            margin-left: 20px;
+            color: #4b5563;
+            line-height: 1.8;
+        }
+
+        .instructions li {
+            margin-bottom: 8px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .upload-section {
+                padding: 30px 20px;
+            }
+
+            th, td {
+                padding: 10px;
+                font-size: 0.9rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚓ MOSES Value Extraction</h1>
+            <p>Extract damage stability data from MOSES files with ease</p>
+        </div>
+
+        <div class="upload-section" id="uploadSection">
+            <div class="upload-icon">📁</div>
+            <h3>Upload MOSES File</h3>
+            <p>Click to browse or drag and drop your .txt or .out file here</p>
+            <input type="file" id="fileInput" accept=".txt,.out">
+        </div>
+
+        <div class="file-info" id="fileInfo">
+            <span class="icon">✓</span>
+            <span class="text" id="fileName"></span>
+        </div>
+
+        <button class="btn" id="extractBtn" disabled>Extract Data</button>
+
+        <div class="alert error" id="errorAlert">
+            <span>⚠️</span>
+            <span id="errorMessage"></span>
+        </div>
+
+        <div class="alert success" id="successAlert">
+            <span>✓</span>
+            <span id="successMessage"></span>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Processing your MOSES file...</p>
+        </div>
+
+        <div class="results" id="results">
+            <h2>📊 Extracted Data</h2>
+            <div class="table-container">
+                <table id="dataTable">
+                    <thead>
+                        <tr>
+                            <th>Damage</th>
+                            <th>GM (m)</th>
+                            <th>AFT(P) (m)</th>
+                            <th>AFT(S) (m)</th>
+                            <th>FWD(P) (m)</th>
+                            <th>FWD(S) (m)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                    </tbody>
+                </table>
+            </div>
+            <button class="btn success" id="downloadBtn">📥 Download Excel File</button>
+        </div>
+
+        <div class="instructions">
+            <h3>📖 How to Use</h3>
+            <ol>
+                <li>Upload your MOSES output file (.txt or .out format)</li>
+                <li>Click "Extract Data" to process the file</li>
+                <li>Review the extracted damage cases, GM values, and draft marks</li>
+                <li>Click "Download Excel File" to save the results</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        let uploadedFile = null;
+        let extractedData = null;
+
+        const uploadSection = document.getElementById('uploadSection');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const extractBtn = document.getElementById('extractBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const errorAlert = document.getElementById('errorAlert');
+        const successAlert = document.getElementById('successAlert');
+        const errorMessage = document.getElementById('errorMessage');
+        const successMessage = document.getElementById('successMessage');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+        const tableBody = document.getElementById('tableBody');
+
+        // Upload section click
+        uploadSection.addEventListener('click', () => fileInput.click());
+
+        // Drag and drop
+        uploadSection.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadSection.classList.add('dragover');
+        });
+
+        uploadSection.addEventListener('dragleave', () => {
+            uploadSection.classList.remove('dragover');
+        });
+
+        uploadSection.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        // File input change
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            uploadedFile = file;
+            fileName.textContent = `File loaded: ${file.name}`;
+            fileInfo.classList.add('show');
+            extractBtn.disabled = false;
+            hideAlerts();
+            results.classList.remove('show');
+        }
+
+        // Extract data
+        extractBtn.addEventListener('click', async () => {
+            if (!uploadedFile) return;
+
+            hideAlerts();
+            loading.classList.add('show');
+            results.classList.remove('show');
+
+            try {
+                const text = await uploadedFile.text();
+                extractedData = parseMosesFile(text);
+
+                if (extractedData.length === 0) {
+                    throw new Error('No data was extracted. Please verify the file format.');
+                }
+
+                displayResults(extractedData);
+                showSuccess(`Successfully extracted ${extractedData.length} damage cases!`);
+                loading.classList.remove('show');
+                results.classList.add('show');
+            } catch (error) {
+                loading.classList.remove('show');
+                showError(error.message);
+            }
+        });
+
+        function parseMosesFile(text) {
+            const results = [];
+            const lines = text.split('\n');
+            
+            let currentDamage = null;
+            let currentGM = null;
+            let currentDrafts = {};
+            let inStabilitySummary = false;
+            let inDraftMarks = false;
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                
+                // Detect damage case
+                if (line.includes('DAMAGE STABILITY Case-')) {
+                    const match = line.match(/Case-(\d+)\s*\(Compartment\s+(\w+)\s+Flooded\)/);
+                    if (match) {
+                        currentDamage = match[2];
+                    }
+                } else if (line.includes('INTACT TOW CONDITION') || line.includes('Damage = NONE')) {
+                    currentDamage = 'NONE';
+                }
+                
+                // Detect draft marks
+                if (line.includes('+++ D R A F T   M A R K   R E A D I N G S +++')) {
+                    inDraftMarks = true;
+                    currentDrafts = {};
+                    continue;
+                }
+                
+                if (inDraftMarks && line.includes('AFT(P)')) {
+                    const pattern = /(\w+\([PS]\))\s+([\d.]+)/g;
+                    let match;
+                    while ((match = pattern.exec(line)) !== null) {
+                        const name = match[1];
+                        const value = parseFloat(match[2]);
+                        if (name !== 'MEAN(P)' && name !== 'MEAN(S)') {
+                            currentDrafts[name] = value;
+                        }
+                    }
+                    inDraftMarks = false;
+                }
+                
+                // Detect stability summary
+                if (line.includes('+++ S T A B I L I T Y   S U M M A R Y +++')) {
+                    inStabilitySummary = true;
+                    continue;
+                }
+                
+                // Extract GM value
+                if (inStabilitySummary && line.includes('GM') && line.includes('>=')) {
+                    const match = line.match(/GM\s+>=\s+[\d.]+\s+M\s+([\d.]+)(?:\s+Passes)?/);
+                    if (match) {
+                        currentGM = parseFloat(match[1]);
+                        
+                        if (currentDamage !== null && Object.keys(currentDrafts).length > 0) {
+                            results.push({
+                                damage: currentDamage,
+                                gm: currentGM,
+                                drafts: { ...currentDrafts }
+                            });
+                        }
+                        
+                        inStabilitySummary = false;
+                    }
+                }
+            }
+            
+            return results;
+        }
+
+        function displayResults(data) {
+            tableBody.innerHTML = '';
+            data.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${row.damage}</strong></td>
+                    <td>${row.gm.toFixed(2)}</td>
+                    <td>${row.drafts['AFT(P)']?.toFixed(2) || '-'}</td>
+                    <td>${row.drafts['AFT(S)']?.toFixed(2) || '-'}</td>
+                    <td>${row.drafts['FWD(P)']?.toFixed(2) || '-'}</td>
+                    <td>${row.drafts['FWD(S)']?.toFixed(2) || '-'}</td>
+                `;
+                tableBody.appendChild(tr);
+            });
+        }
+
+        // Download Excel
+        downloadBtn.addEventListener('click', () => {
+            if (!extractedData) return;
+
+            const excelData = extractedData.map(row => ({
+                'Damage': row.damage,
+                'GM (m)': row.gm.toFixed(2),
+                'AFT(P) (m)': row.drafts['AFT(P)']?.toFixed(2) || '-',
+                'AFT(S) (m)': row.drafts['AFT(S)']?.toFixed(2) || '-',
+                'FWD(P) (m)': row.drafts['FWD(P)']?.toFixed(2) || '-',
+                'FWD(S) (m)': row.drafts['FWD(S)']?.toFixed(2) || '-'
+            }));
+
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.json_to_sheet(excelData);
+            
+            // Set column widths
+            ws['!cols'] = [
+                { wch: 15 },
+                { wch: 12 },
+                { wch: 12 },
+                { wch: 12 },
+                { wch: 12 },
+                { wch: 12 }
+            ];
+            
+            XLSX.utils.book_append_sheet(wb, ws, 'MOSES Data Extraction');
+            XLSX.writeFile(wb, 'moses_extraction.xlsx');
+            
+            showSuccess('Excel file downloaded successfully!');
+        });
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorAlert.classList.add('show');
+        }
+
+        function showSuccess(message) {
+            successMessage.textContent = message;
+            successAlert.classList.add('show');
+        }
+
+        function hideAlerts() {
+            errorAlert.classList.remove('show');
+            successAlert.classList.remove('show');
+        }
+    </script>
+</body>
+</html>
