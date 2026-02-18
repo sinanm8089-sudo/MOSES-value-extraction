@@ -37,6 +37,9 @@ export default function MosesExtractor() {
     try {
       const text = await file.text();
       const data = parseMosesFile(text);
+      if (data.length === 0) {
+        throw new Error('No data was extracted. Please verify the file format.');
+      }
       setExtractedData(data);
     } catch (err) {
       setError('Error processing file: ' + err.message);
@@ -49,73 +52,125 @@ export default function MosesExtractor() {
     const results = [];
     const lines = text.split('\n');
 
-    // Find all stability summary sections
-    let currentDamage = null;
-    let currentGM = null;
-    let currentDrafts = {};
+    // Data storage
+    const stabilityData = {};
+    const draftData = {};
+
+    // State variables
+    let currentCase = null;
     let inStabilitySummary = false;
     let inDraftMarks = false;
+    let tempHeel = null;
+    let tempTrim = null;
+    let tempDrafts = {};
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
 
-      // Detect damage case from section headers
+      // Detect damage case
       if (line.includes('DAMAGE STABILITY Case-')) {
         const match = line.match(/Case-(\d+)\s*\(Compartment\s+(\w+)\s+Flooded\)/);
         if (match) {
-          currentDamage = match[2];
+          currentCase = match[1];
         }
-      } else if (line.includes('INTACT TOW CONDITION') || line.includes('Damage = NONE')) {
-        currentDamage = 'NONE';
+      } else if (line.includes('INTACT TOW CONDITION')) {
+        currentCase = 'Intact';
+      } else if (line.includes('Damage = NONE') && line.includes('VCG')) {
+        currentCase = 'Intact';
+      } else if (line.includes('Damage =') && line.includes('VCG')) {
+        const match = line.match(/Damage = (\w+)\s/);
+        if (match) {
+          const damageId = match[1];
+          if (damageId !== 'NONE!') {
+            const caseMatch = damageId.match(/(\d+)/);
+            if (caseMatch) {
+              currentCase = caseMatch[1];
+            }
+          }
+        }
       }
 
-      // Detect draft mark readings section
+      // Detect draft marks
       if (line.includes('+++ D R A F T   M A R K   R E A D I N G S +++')) {
         inDraftMarks = true;
-        currentDrafts = {};
+        tempDrafts = {};
         continue;
       }
 
       // Parse draft marks
-      if (inDraftMarks && line.includes('AFT(P)')) {
-        const draftLine = line.replace(/\s+/g, ' ');
-        const parts = draftLine.split(' ');
-
-        for (let j = 0; j < parts.length; j += 2) {
-          if (parts[j] && parts[j + 1] && parts[j] !== 'Name' && parts[j] !== 'Draft') {
-            const name = parts[j];
-            const value = parseFloat(parts[j + 1]);
-            if (!isNaN(value) && name !== 'MEAN(P)' && name !== 'MEAN(S)') {
-              currentDrafts[name] = value;
-            }
+      if (inDraftMarks && line.includes('AFT(P)') && line.includes('AFT(S)')) {
+        const pattern = /(\w+\([PS]\))\s+([\d.]+)/g;
+        let match;
+        while ((match = pattern.exec(line)) !== null) {
+          const name = match[1];
+          if (name !== 'MEAN(P)' && name !== 'MEAN(S)') {
+            tempDrafts[name] = parseFloat(match[2]);
           }
         }
+
+        if (currentCase) {
+          draftData[currentCase] = { ...tempDrafts };
+        }
+
         inDraftMarks = false;
       }
 
-      // Detect stability summary section
+      // Detect stability summary
       if (line.includes('+++ S T A B I L I T Y   S U M M A R Y +++')) {
         inStabilitySummary = true;
+        tempHeel = null;
+        tempTrim = null;
         continue;
       }
 
-      // Extract GM value from stability summary
-      if (inStabilitySummary && line.includes('GM') && line.includes('>=')) {
-        const match = line.match(/GM\s+>=\s+[\d.]+\s+M\s+([\d.]+)/);
-        if (match) {
-          currentGM = parseFloat(match[1]);
-
-          // Store the complete record
-          if (currentDamage !== null && Object.keys(currentDrafts).length > 0) {
-            results.push({
-              damage: currentDamage,
-              gm: currentGM,
-              drafts: { ...currentDrafts }
-            });
-          }
-
-          inStabilitySummary = false;
+      if (inStabilitySummary) {
+        // Extract Roll (Heel)
+        if (line.includes('Roll') && line.includes('Deg')) {
+          const rollMatch = line.match(/Roll\s*=\s*([-\d.]+)\s*Deg/);
+          if (rollMatch) tempHeel = parseFloat(rollMatch[1]);
         }
+
+        // Extract Pitch (Trim)
+        if (line.includes('Pitch') && line.includes('Deg')) {
+          const pitchMatch = line.match(/Pitch\s*=\s*([-\d.]+)\s*Deg/);
+          if (pitchMatch) tempTrim = parseFloat(pitchMatch[1]);
+        }
+
+        // Extract Area Ratio
+        if (line.includes('Area Ratio') && line.includes('Passes')) {
+          const match = line.match(/Area Ratio\s+>=\s+([\d.]+)\s+([\d.]+)\s+Passes/);
+          if (match && currentCase) {
+            stabilityData[currentCase] = {
+              heel: tempHeel !== null ? tempHeel : 0.0,
+              trim: tempTrim !== null ? tempTrim : 0.0,
+              areaRatioRequired: parseFloat(match[1]),
+              areaRatioActual: parseFloat(match[2])
+            };
+            inStabilitySummary = false;
+          }
+        }
+      }
+    }
+
+    // Combine data
+    // Sort keys to maintain order (Intact first, then numeric cases)
+    const sortedCases = Object.keys(stabilityData).sort((a, b) => {
+      if (a === 'Intact') return -1;
+      if (b === 'Intact') return 1;
+      return parseInt(a) - parseInt(b);
+    });
+
+    for (const caseId of sortedCases) {
+      if (draftData[caseId]) {
+        results.push({
+          case: caseId,
+          drafts: draftData[caseId],
+          heel: stabilityData[caseId].heel,
+          trim: stabilityData[caseId].trim,
+          areaRatioActual: stabilityData[caseId].areaRatioActual,
+          areaRatioRequired: stabilityData[caseId].areaRatioRequired,
+          remarks: 'Pass'
+        });
       }
     }
 
@@ -126,27 +181,63 @@ export default function MosesExtractor() {
     if (!extractedData) return;
 
     try {
+      // Define headers
+      const excelHeader = [
+        ['', 'Draft Mark (m)', '', '', '', 'Heel', 'Trim', 'Wind Area Ratio', '', ''],
+        ['Case No.', 'Aft Port', 'Aft Stbd', 'Fwd Port', 'Fwd Stbd', '(deg)', '(deg)', 'Actual', 'Required', 'Remarks']
+      ];
+
+      // Map data
+      const excelData = extractedData.map(row => [
+        row.case,
+        parseFloat(row.drafts['AFT(P)']?.toFixed(2) || 0),
+        parseFloat(row.drafts['AFT(S)']?.toFixed(2) || 0),
+        parseFloat(row.drafts['FWD(P)']?.toFixed(2) || 0),
+        parseFloat(row.drafts['FWD(S)']?.toFixed(2) || 0),
+        parseFloat(row.heel.toFixed(2)),
+        parseFloat(row.trim.toFixed(2)),
+        parseFloat(row.areaRatioActual.toFixed(2)),
+        parseFloat(row.areaRatioRequired.toFixed(1)),
+        row.remarks
+      ]);
+
+      // Combine for worksheet
+      const wsData = [...excelHeader, ...excelData];
+
       // Create workbook and worksheet
       const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-      // Prepare data for Excel
-      const excelData = extractedData.map(row => ({
-        'Damage': row.damage,
-        'GM (m)': row.gm.toFixed(2),
-        'AFT(P) (m)': row.drafts['AFT(P)']?.toFixed(2) || '-',
-        'AFT(S) (m)': row.drafts['AFT(S)']?.toFixed(2) || '-',
-        'FWD(P) (m)': row.drafts['FWD(P)']?.toFixed(2) || '-',
-        'FWD(S) (m)': row.drafts['FWD(S)']?.toFixed(2) || '-'
-      }));
+      // Merge cells for headers
+      if (!ws['!merges']) ws['!merges'] = [];
+      ws['!merges'].push(
+        { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } }, // Case No
+        { s: { r: 0, c: 1 }, e: { r: 0, c: 4 } }, // Draft Marks
+        { s: { r: 0, c: 5 }, e: { r: 1, c: 5 } }, // Heel
+        { s: { r: 0, c: 6 }, e: { r: 1, c: 6 } }, // Trim
+        { s: { r: 0, c: 7 }, e: { r: 0, c: 8 } }, // Wind Area Ratio
+        { s: { r: 0, c: 9 }, e: { r: 1, c: 9 } }  // Remarks
+      );
 
-      // Create worksheet from data
-      const ws = XLSX.utils.json_to_sheet(excelData);
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 10 }, // Case
+        { wch: 10 }, // AFT P
+        { wch: 10 }, // AFT S
+        { wch: 10 }, // FWD P
+        { wch: 10 }, // FWD S
+        { wch: 8 },  // Heel
+        { wch: 8 },  // Trim
+        { wch: 12 }, // Actual
+        { wch: 10 }, // Required
+        { wch: 10 }  // Remarks
+      ];
 
       // Add worksheet to workbook
-      XLSX.utils.book_append_sheet(wb, ws, 'MOSES Data Extraction');
+      XLSX.utils.book_append_sheet(wb, ws, 'Damage Stability Results');
 
       // Generate Excel file and trigger download
-      XLSX.writeFile(wb, 'moses_extraction.xlsx');
+      XLSX.writeFile(wb, 'Damage_Stability_Results.xlsx');
     } catch (err) {
       setError('Error creating Excel file: ' + err.message);
     }
@@ -154,7 +245,7 @@ export default function MosesExtractor() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="bg-white rounded-lg shadow-xl p-8">
           <div className="flex items-center gap-3 mb-8">
             <FileText className="w-10 h-10 text-indigo-600" />
@@ -209,23 +300,35 @@ export default function MosesExtractor() {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Damage</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">GM (m)</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">AFT(P)</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">AFT(S)</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">FWD(P)</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">FWD(S)</th>
+                      <th rowSpan="2" className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider border-b">Case No.</th>
+                      <th colSpan="4" className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider border-b">Draft Mark (m)</th>
+                      <th rowSpan="2" className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider border-b">Heel<br />(deg)</th>
+                      <th rowSpan="2" className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider border-b">Trim<br />(deg)</th>
+                      <th colSpan="2" className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider border-b">Wind Area Ratio</th>
+                      <th rowSpan="2" className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider border-b">Remarks</th>
+                    </tr>
+                    <tr>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-100">Aft Port</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-100">Aft Stbd</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-100">Fwd Port</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-100">Fwd Stbd</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-100">Actual</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-100">Required</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {extractedData.map((row, idx) => (
                       <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">{row.damage}</td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{row.gm.toFixed(2)}</td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{row.drafts['AFT(P)']?.toFixed(2) || '-'}</td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{row.drafts['AFT(S)']?.toFixed(2) || '-'}</td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{row.drafts['FWD(P)']?.toFixed(2) || '-'}</td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{row.drafts['FWD(S)']?.toFixed(2) || '-'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm font-bold text-center text-gray-900">{row.case}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-900">{row.drafts['AFT(P)']?.toFixed(2) || '-'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-900">{row.drafts['AFT(S)']?.toFixed(2) || '-'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-900">{row.drafts['FWD(P)']?.toFixed(2) || '-'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-900">{row.drafts['FWD(S)']?.toFixed(2) || '-'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-900">{row.heel.toFixed(2)}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-900">{row.trim.toFixed(2)}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-900">{row.areaRatioActual.toFixed(2)}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-900">{row.areaRatioRequired.toFixed(1)}</td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-green-600 font-bold">{row.remarks}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -248,7 +351,7 @@ export default function MosesExtractor() {
             <ol className="list-decimal list-inside space-y-2 text-sm text-blue-800">
               <li>Upload your MOSES output file (.txt or .out format)</li>
               <li>Click "Extract Data" to process the file</li>
-              <li>Review the extracted damage cases, GM values, and draft marks</li>
+              <li>Review the extracted damage cases, stability data, and draft marks</li>
               <li>Click "Download Excel File" to save the results</li>
             </ol>
           </div>

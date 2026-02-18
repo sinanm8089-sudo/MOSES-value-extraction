@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -37,6 +38,7 @@
                 opacity: 0;
                 transform: translateY(30px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -267,8 +269,13 @@
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
         .instructions {
@@ -307,13 +314,15 @@
                 padding: 30px 20px;
             }
 
-            th, td {
+            th,
+            td {
                 padding: 10px;
                 font-size: 0.9rem;
             }
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="header">
@@ -356,12 +365,22 @@
                 <table id="dataTable">
                     <thead>
                         <tr>
-                            <th>Damage</th>
-                            <th>GM (m)</th>
-                            <th>AFT(P) (m)</th>
-                            <th>AFT(S) (m)</th>
-                            <th>FWD(P) (m)</th>
-                            <th>FWD(S) (m)</th>
+                            <th rowspan="2">Case No.</th>
+                            <th colspan="4" style="text-align: center; border-bottom: 1px solid rgba(255,255,255,0.2);">
+                                Draft Mark (m)</th>
+                            <th rowspan="2">Heel<br>(deg)</th>
+                            <th rowspan="2">Trim<br>(deg)</th>
+                            <th colspan="2" style="text-align: center; border-bottom: 1px solid rgba(255,255,255,0.2);">
+                                Wind Area Ratio</th>
+                            <th rowspan="2">Remarks</th>
+                        </tr>
+                        <tr>
+                            <th>Aft Port</th>
+                            <th>Aft Stbd</th>
+                            <th>Fwd Port</th>
+                            <th>Fwd Stbd</th>
+                            <th>Actual</th>
+                            <th>Required</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody">
@@ -376,7 +395,7 @@
             <ol>
                 <li>Upload your MOSES output file (.txt or .out format)</li>
                 <li>Click "Extract Data" to process the file</li>
-                <li>Review the extracted damage cases, GM values, and draft marks</li>
+                <li>Review the extracted damage cases, stability data, and draft marks</li>
                 <li>Click "Download Excel File" to save the results</li>
             </ol>
         </div>
@@ -467,71 +486,129 @@
         function parseMosesFile(text) {
             const results = [];
             const lines = text.split('\n');
-            
-            let currentDamage = null;
-            let currentGM = null;
-            let currentDrafts = {};
+
+            // Data storage
+            const stabilityData = {};
+            const draftData = {};
+
+            // State variables
+            let currentCase = null;
             let inStabilitySummary = false;
             let inDraftMarks = false;
-            
+            let tempHeel = null;
+            let tempTrim = null;
+            let tempDrafts = {};
+
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i].trim();
-                
+
                 // Detect damage case
                 if (line.includes('DAMAGE STABILITY Case-')) {
                     const match = line.match(/Case-(\d+)\s*\(Compartment\s+(\w+)\s+Flooded\)/);
                     if (match) {
-                        currentDamage = match[2];
+                        currentCase = match[1];
                     }
-                } else if (line.includes('INTACT TOW CONDITION') || line.includes('Damage = NONE')) {
-                    currentDamage = 'NONE';
+                } else if (line.includes('INTACT TOW CONDITION')) {
+                    currentCase = 'Intact';
+                } else if (line.includes('Damage = NONE') && line.includes('VCG')) {
+                    currentCase = 'Intact';
+                } else if (line.includes('Damage =') && line.includes('VCG')) {
+                    const match = line.match(/Damage = (\w+)\s/);
+                    if (match) {
+                        const damageId = match[1];
+                        if (damageId !== 'NONE!') {
+                            const caseMatch = damageId.match(/(\d+)/);
+                            if (caseMatch) {
+                                currentCase = caseMatch[1];
+                            }
+                        }
+                    }
                 }
-                
-                // Detect draft marks
+
+                // Detect draft mark readings
                 if (line.includes('+++ D R A F T   M A R K   R E A D I N G S +++')) {
                     inDraftMarks = true;
-                    currentDrafts = {};
+                    tempDrafts = {};
                     continue;
                 }
-                
-                if (inDraftMarks && line.includes('AFT(P)')) {
+
+                // Parse draft marks
+                if (inDraftMarks && line.includes('AFT(P)') && line.includes('AFT(S)')) {
                     const pattern = /(\w+\([PS]\))\s+([\d.]+)/g;
                     let match;
                     while ((match = pattern.exec(line)) !== null) {
                         const name = match[1];
-                        const value = parseFloat(match[2]);
                         if (name !== 'MEAN(P)' && name !== 'MEAN(S)') {
-                            currentDrafts[name] = value;
+                            tempDrafts[name] = parseFloat(match[2]);
                         }
                     }
+
+                    if (currentCase) {
+                        draftData[currentCase] = { ...tempDrafts };
+                    }
+
                     inDraftMarks = false;
                 }
-                
+
                 // Detect stability summary
                 if (line.includes('+++ S T A B I L I T Y   S U M M A R Y +++')) {
                     inStabilitySummary = true;
+                    tempHeel = null;
+                    tempTrim = null;
                     continue;
                 }
-                
-                // Extract GM value
-                if (inStabilitySummary && line.includes('GM') && line.includes('>=')) {
-                    const match = line.match(/GM\s+>=\s+[\d.]+\s+M\s+([\d.]+)(?:\s+Passes)?/);
-                    if (match) {
-                        currentGM = parseFloat(match[1]);
-                        
-                        if (currentDamage !== null && Object.keys(currentDrafts).length > 0) {
-                            results.push({
-                                damage: currentDamage,
-                                gm: currentGM,
-                                drafts: { ...currentDrafts }
-                            });
+
+                if (inStabilitySummary) {
+                    // Extract Roll (Heel)
+                    if (line.includes('Roll') && line.includes('Deg')) {
+                        const rollMatch = line.match(/Roll\s*=\s*([-\d.]+)\s*Deg/);
+                        if (rollMatch) tempHeel = parseFloat(rollMatch[1]);
+                    }
+
+                    // Extract Pitch (Trim)
+                    if (line.includes('Pitch') && line.includes('Deg')) {
+                        const pitchMatch = line.match(/Pitch\s*=\s*([-\d.]+)\s*Deg/);
+                        if (pitchMatch) tempTrim = parseFloat(pitchMatch[1]);
+                    }
+
+                    // Extract Area Ratio
+                    if (line.includes('Area Ratio') && line.includes('Passes')) {
+                        const match = line.match(/Area Ratio\s+>=\s+([\d.]+)\s+([\d.]+)\s+Passes/);
+                        if (match && currentCase) {
+                            stabilityData[currentCase] = {
+                                heel: tempHeel !== null ? tempHeel : 0.0,
+                                trim: tempTrim !== null ? tempTrim : 0.0,
+                                areaRatioRequired: parseFloat(match[1]),
+                                areaRatioActual: parseFloat(match[2])
+                            };
+                            inStabilitySummary = false;
                         }
-                        
-                        inStabilitySummary = false;
                     }
                 }
             }
-            
+
+            // Combine data
+            // Sort keys to maintain order (Intact first, then numeric cases)
+            const sortedCases = Object.keys(stabilityData).sort((a, b) => {
+                if (a === 'Intact') return -1;
+                if (b === 'Intact') return 1;
+                return parseInt(a) - parseInt(b);
+            });
+
+            for (const caseId of sortedCases) {
+                if (draftData[caseId]) {
+                    results.push({
+                        case: caseId,
+                        drafts: draftData[caseId],
+                        heel: stabilityData[caseId].heel,
+                        trim: stabilityData[caseId].trim,
+                        areaRatioActual: stabilityData[caseId].areaRatioActual,
+                        areaRatioRequired: stabilityData[caseId].areaRatioRequired,
+                        remarks: 'Pass'
+                    });
+                }
+            }
+
             return results;
         }
 
@@ -540,12 +617,16 @@
             data.forEach(row => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td><strong>${row.damage}</strong></td>
-                    <td>${row.gm.toFixed(2)}</td>
-                    <td>${row.drafts['AFT(P)']?.toFixed(2) || '-'}</td>
-                    <td>${row.drafts['AFT(S)']?.toFixed(2) || '-'}</td>
-                    <td>${row.drafts['FWD(P)']?.toFixed(2) || '-'}</td>
-                    <td>${row.drafts['FWD(S)']?.toFixed(2) || '-'}</td>
+                    <td style="text-align: center; font-weight: bold;">${row.case}</td>
+                    <td style="text-align: center;">${row.drafts['AFT(P)']?.toFixed(2) || '-'}</td>
+                    <td style="text-align: center;">${row.drafts['AFT(S)']?.toFixed(2) || '-'}</td>
+                    <td style="text-align: center;">${row.drafts['FWD(P)']?.toFixed(2) || '-'}</td>
+                    <td style="text-align: center;">${row.drafts['FWD(S)']?.toFixed(2) || '-'}</td>
+                    <td style="text-align: center;">${row.heel.toFixed(2)}</td>
+                    <td style="text-align: center;">${row.trim.toFixed(2)}</td>
+                    <td style="text-align: center;">${row.areaRatioActual.toFixed(2)}</td>
+                    <td style="text-align: center;">${row.areaRatioRequired.toFixed(1)}</td>
+                    <td style="text-align: center; color: #10b981; font-weight: bold;">${row.remarks}</td>
                 `;
                 tableBody.appendChild(tr);
             });
@@ -555,31 +636,60 @@
         downloadBtn.addEventListener('click', () => {
             if (!extractedData) return;
 
-            const excelData = extractedData.map(row => ({
-                'Damage': row.damage,
-                'GM (m)': row.gm.toFixed(2),
-                'AFT(P) (m)': row.drafts['AFT(P)']?.toFixed(2) || '-',
-                'AFT(S) (m)': row.drafts['AFT(S)']?.toFixed(2) || '-',
-                'FWD(P) (m)': row.drafts['FWD(P)']?.toFixed(2) || '-',
-                'FWD(S) (m)': row.drafts['FWD(S)']?.toFixed(2) || '-'
-            }));
+            // Define headers
+            const excelHeader = [
+                ['', 'Draft Mark (m)', '', '', '', 'Heel', 'Trim', 'Wind Area Ratio', '', ''],
+                ['Case No.', 'Aft Port', 'Aft Stbd', 'Fwd Port', 'Fwd Stbd', '(deg)', '(deg)', 'Actual', 'Required', 'Remarks']
+            ];
+
+            // Map data
+            const excelData = extractedData.map(row => [
+                row.case,
+                parseFloat(row.drafts['AFT(P)']?.toFixed(2) || 0),
+                parseFloat(row.drafts['AFT(S)']?.toFixed(2) || 0),
+                parseFloat(row.drafts['FWD(P)']?.toFixed(2) || 0),
+                parseFloat(row.drafts['FWD(S)']?.toFixed(2) || 0),
+                parseFloat(row.heel.toFixed(2)),
+                parseFloat(row.trim.toFixed(2)),
+                parseFloat(row.areaRatioActual.toFixed(2)),
+                parseFloat(row.areaRatioRequired.toFixed(1)),
+                row.remarks
+            ]);
+
+            // Combine for worksheet
+            const wsData = [...excelHeader, ...excelData];
 
             const wb = XLSX.utils.book_new();
-            const ws = XLSX.utils.json_to_sheet(excelData);
-            
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+            // Merge cells for headers
+            if (!ws['!merges']) ws['!merges'] = [];
+            ws['!merges'].push(
+                { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } }, // Case No
+                { s: { r: 0, c: 1 }, e: { r: 0, c: 4 } }, // Draft Marks
+                { s: { r: 0, c: 5 }, e: { r: 1, c: 5 } }, // Heel
+                { s: { r: 0, c: 6 }, e: { r: 1, c: 6 } }, // Trim
+                { s: { r: 0, c: 7 }, e: { r: 0, c: 8 } }, // Wind Area Ratio
+                { s: { r: 0, c: 9 }, e: { r: 1, c: 9 } }  // Remarks
+            );
+
             // Set column widths
             ws['!cols'] = [
-                { wch: 15 },
-                { wch: 12 },
-                { wch: 12 },
-                { wch: 12 },
-                { wch: 12 },
-                { wch: 12 }
+                { wch: 10 }, // Case
+                { wch: 10 }, // AFT P
+                { wch: 10 }, // AFT S
+                { wch: 10 }, // FWD P
+                { wch: 10 }, // FWD S
+                { wch: 8 },  // Heel
+                { wch: 8 },  // Trim
+                { wch: 12 }, // Actual
+                { wch: 10 }, // Required
+                { wch: 10 }  // Remarks
             ];
-            
-            XLSX.utils.book_append_sheet(wb, ws, 'MOSES Data Extraction');
-            XLSX.writeFile(wb, 'moses_extraction.xlsx');
-            
+
+            XLSX.utils.book_append_sheet(wb, ws, 'Damage Stability Results');
+            XLSX.writeFile(wb, 'Damage_Stability_Results.xlsx');
+
             showSuccess('Excel file downloaded successfully!');
         });
 
@@ -599,4 +709,5 @@
         }
     </script>
 </body>
+
 </html>
